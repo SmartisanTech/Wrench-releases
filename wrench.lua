@@ -14,10 +14,11 @@ local phone_serial = ""
 local configDir = "."
 local last_uploaded_pics = {}
 local weixin_open_homepage
+local file_exists
 
 local t1_call, t1_run, t1_adb_mail, t1_save_mail_heads
 local adb_push, adb_pull, adb_install
-local shell_quote, putclip, t1_post, push_text, t1_post2
+local shell_quote, putclip, t1_post, push_text, t1_post2, kill_android_vnc
 local adb_start_activity
 local picture_to_weixin_share, picture_to_weibo_share, picture_to_qq_share
 local picture_to_momo_share, t1_add_mms_receiver
@@ -72,7 +73,7 @@ local weixinSnsUploadActivity = "com.tencent.mm/com.tencent.mm.plugin.sns.ui.Sns
 local weixinImagePreviewActivity = "com.tencent.mm/com.tencent.mm.plugin.gallery.ui.ImagePreviewUI"
 local weiboShareActivity = "com.sina.weibo/com.sina.weibo.composerinde.OriginalComposerActivity"
 local qqShareActivity = "com.qzone/com.qzonex.module.operation.ui.QZonePublishMoodActivity"
-local emailSmartisanActivity = "com.android.email/com.android.email.activity.ComposeActivityEmail"
+local emailSmartisanActivity = "com.android.email/com.android.mail.compose.ComposeActivity"
 local oiFileChooseActivity = "org.openintents.filemanager/org.openintents.filemanager.IntentFilterActivity"
 local weiboCommentActivity = "com.sina.weibo/com.sina.weibo.composerinde.CommentComposerActivity"
 local weiboForwardActivity = "com.sina.weibo/com.sina.weibo.composerinde.ForwardComposerActivity"
@@ -645,6 +646,24 @@ adb_top_window = function()
    return top_window:sub(1, -2)
 end
 
+local function search_mail(what)
+   putclip_nowait(what)
+   for i = 1, 5 do
+      adb_start_activity"com.android.email/com.android.email.activity.Welcome"
+      adb_event"sleep .5 adb-tap 66 155 sleep .5"
+      if adb_top_window() == "com.android.email/com.android.email.activity.setup.AccountSettings" then
+         break
+      end
+      log("Did not get mail settings at %d", i)
+      adb_event"key back"
+   end
+   if adb_top_window() ~= "com.android.email/com.android.email.activity.setup.AccountSettings" then
+      log("Failed to get mail settings")
+      return
+   end
+   adb_event"key back sleep .5 adb-tap 218 343 sleep .2 key scroll_lock"
+end
+
 local function get_coffee(what)
    for i = 1, 5 do
       weixin_open_homepage()
@@ -675,6 +694,7 @@ local function get_coffee(what)
    if yes_or_no_p("确认发送秦师傅咖啡订单？") then
       adb_event"adb-tap 539 957"
    end
+   system{'alarm', '10', 'coffee'}
 end
 
 weixin_open_homepage = function()
@@ -1059,7 +1079,11 @@ putclip = function(text)
    adb_start_service_and_wait_file_gone('com.bhj.setclip/.PutClipService', '/sdcard/putclip.txt')
 end
 
-local check_file_pushed = function(file, md5)
+local check_file_push_and_renamed = function(file, md5, rename_to)
+   if not rename_to then
+      rename_to = file:gsub(".*/", "")
+   end
+
    local md5_on_phone = adb_pipe("cat /sdcard/" .. md5)
    md5_on_phone = md5_on_phone:gsub("\n", "")
    local md5file = io.open(md5)
@@ -1069,8 +1093,8 @@ local check_file_pushed = function(file, md5)
    debugging("on phone: %s, local: %s", md5_on_phone, md5_on_PC)
    if md5_on_phone ~= md5_on_PC then
       log("Need to upload %s to your phone.", file)
-      adb_push{file, "/data/data/com.android.shell/" .. file .. ".bak"}
-      adb_shell(("mv /data/data/com.android.shell/%s.bak /data/data/com.android.shell/%s"):format(file, file))
+      adb_push{file, "/data/data/com.android.shell/" .. rename_to .. ".bak"}
+      adb_shell(("mv /data/data/com.android.shell/%s.bak /data/data/com.android.shell/%s; chmod 755 /data/data/com.android.shell/%s"):format(rename_to, rename_to, rename_to))
 
       adb_push{md5, "/sdcard/" .. md5}
       local md5_on_phone = adb_pipe("cat /sdcard/" .. md5)
@@ -1081,6 +1105,10 @@ local check_file_pushed = function(file, md5)
          log("Wrench helper file %s upload OK.", file)
       end
    end
+end
+
+local check_file_pushed = function(file, md5)
+   return check_file_push_and_renamed(file, md5, nil)
 end
 
 local check_apk_installed = function(apk, md5)
@@ -1108,6 +1136,11 @@ local check_apk_installed = function(apk, md5)
             error("Install " .. apk .. " failed, output is " .. install_output)
          end
       end
+   end
+end
+
+if not t1_set_variable then
+   t1_set_variable = function(name, val)
    end
 end
 
@@ -1159,11 +1192,12 @@ t1_config = function(passedConfigDirPath)
          adb_kill_server()
          error("Done config for your adb devices, please try again")
       else
-         error("No phone found, can't set up, uname is: " .. uname)
+         error(string.format("No phone found, can't set up, uname is: '%s', ANDROID_SERIAL is '%s'", uname, os.getenv("ANDROID_SERIAL")))
       end
    end
    check_apk_installed("Setclip.apk", "Setclip.apk.md5")
    check_file_pushed("am.jar", "am.jar.md5")
+   check_file_pushed("busybox", "busybox.md5")
 
    local weixin_phone_file, _, errno = io.open("weixin-phones.txt", "rb")
    if not vcf_file then
@@ -1181,6 +1215,15 @@ t1_config = function(passedConfigDirPath)
    sdk_version = adb_pipe("getprop ro.build.version.sdk")
    brand = adb_pipe("getprop ro.product.brand"):gsub("\n.*", "")
    model = adb_pipe("getprop ro.product.model"):gsub("\n.*", "")
+   arm_arch = adb_pipe("/data/data/com.android.shell/busybox uname -m")
+   androidvncserver = ("androidvncserver-%s.sdk%s"):format(arm_arch, sdk_version)
+
+   if file_exists(androidvncserver) then
+      check_file_push_and_renamed(androidvncserver, androidvncserver ..  ".md5", "androidvncserver")
+      t1_set_variable("using-vnc", "true")
+   else
+      t1_set_variable("using-vnc", "false")
+   end
 
    debugging("sdk is %s\nbrand is %s\nmodel is %s\n", sdk_version, brand, model)
    sdk_version = tonumber(sdk_version)
@@ -1318,15 +1361,18 @@ qq_find_friend = function(friend_name)
    log("qq find friend: %s", friend_name)
    for i = 1, 5 do
       qq_open_homepage()
-      adb_event"sleep .3 adb-tap 391 288 sleep .8"
-      local top_window = wait_input_target(qqChatActivity2, qqGroupSearch)
+      adb_event"sleep .3 adb-tap 391 288"
+      local top_window = wait_input_target_n(15, qqChatActivity2, qqGroupSearch)
       adb_event"key scroll_lock sleep .6"
       if top_window and top_window:match(qqGroupSearch) then
          log"Fonud qqGroupSearch"
          adb_event"adb-tap 365 384"
          break
       else
-         log("Got stuck in qqChatActivity2: %s", top_window)
+         log("Got stuck in qqChatActivity2, ime stuck?: %s at %d", top_window, i)
+         if i == 5 then
+            error("Can't get to qqGroupSearch in the end")
+         end
          adb_event"adb-tap 303 291"
       end
    end
@@ -1364,7 +1410,7 @@ qq_find_group_friend = function(friend_name)
          break
       else
          log("Did not get into troopMember, try " .. i)
-         adb_event("key space key DEL sleep .5 adb-tap 326 320")
+         adb_event("key space sleep .5 key DEL sleep .5 adb-tap 326 320")
          if i == 5 then
             log("Giving up...")
             return
@@ -1394,6 +1440,20 @@ save_phone_info = function()
    end
    infofile:write("return map\n")
    infofile:close()
+end
+
+kill_android_vnc = function()
+   adb_shell"busybox killall -INT androidvncserver"
+end
+
+file_exists = function(name)
+   local f=io.open(name,"r")
+   if f ~= nil then
+      io.close(f)
+      return true
+   else
+      return false
+   end
 end
 
 t1_post = function(text) -- use weixin
@@ -2036,7 +2096,8 @@ t1_adb_mail = function(subject, to, cc, bcc, attachments)
       cc = expand_mail_groups(cc)
       bcc = expand_mail_groups(bcc)
 
-      adb_am("am start -n " .. emailSmartisanActivity .. " mailto:; mkdir -p /sdcard/adb-mail")
+      adb_am("am start -n " .. emailSmartisanActivity .. " mailto:")
+      adb_shell"mkdir -p /sdcard/adb-mail"
       wait_input_target(emailSmartisanActivity)
 
       adb_event("adb-tap 842 434 sleep 1.5") -- 展开
@@ -2265,6 +2326,8 @@ t1_call = function(number)
          t1_find_dingding_contact(who)
       elseif where == "coffee" then
          get_coffee(who)
+      elseif where == "mail" then
+         search_mail(who)
       else
          prompt_user("Don't know how to do it: " .. where)
       end
@@ -2350,6 +2413,7 @@ M = {}
 M.putclip = putclip
 M.start_weibo_share = start_weibo_share
 M.t1_post = t1_post
+M.kill_android_vnc = kill_android_vnc
 M.t1_find_weixin_contact = t1_find_weixin_contact
 M.adb_shell = adb_shell
 M.adb_pipe = adb_pipe
