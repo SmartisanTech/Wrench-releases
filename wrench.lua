@@ -4,7 +4,7 @@
 local M
 
 -- functions
-local adb_input_method_is_null
+local adb_input_method_is_null, close_ime
 local window_post_button_map = {}
 local mail_group_map = {}
 local phone_info_map = {}
@@ -683,7 +683,7 @@ local function get_coffee(what)
       end
       log("Click for coffee input: %s %d", input_target, i)
 
-      adb_event"adb-tap 15 612"
+      adb_event"adb-tap 15 700"
       sleep(.1)
    end
    if what == "" then
@@ -693,8 +693,9 @@ local function get_coffee(what)
    adb_event"key scroll_lock sleep .5"
    if yes_or_no_p("确认发送秦师傅咖啡订单？") then
       adb_event"adb-tap 539 957"
+      system{'alarm', '10', 'Go get your coffee (take your coffee ticket!)'}
    end
-   system{'alarm', '10', 'coffee'}
+
 end
 
 weixin_open_homepage = function()
@@ -706,9 +707,10 @@ weixin_open_homepage = function()
 
       adb_event"adb-tap 801 132"
       local waiting_search = true
+      local top_window
       for i_search = 1, 4 do
          sleep(.1)
-         local top_window = adb_top_window()
+         top_window = adb_top_window()
          if top_window == weixinSearchActivity then
             log("exit from search by key back " .. i_search)
             wait_input_target(weixinSearchActivity)
@@ -717,14 +719,14 @@ weixin_open_homepage = function()
             waiting_search = false
             return
          elseif top_window ~= weixinLauncherActivity then
-            log("exit the current %s by back key %d", top_window, i)
+            log("exit the current '%s' by back key %d", top_window, i)
             waiting_search = false
          end
          if not waiting_search then
             break
          end
       end
-      log("exit the current by touching back botton " .. i)
+      log("exit the current '%s' by touching back botton %d", top_window, i)
       adb_event"88 170 sleep .1 88 170 sleep .1"
       sleep(.1)
       adb_am("am start -n " .. weixinLauncherActivity)
@@ -1826,7 +1828,7 @@ local function picture_to_weixin_chat(pics, ...)
    end
 end
 
-local function close_ime()
+close_ime = function()
    local input_method, ime_height = adb_get_input_window_dump()
    if (ime_height ~= 0) then
       ime_height = 0
