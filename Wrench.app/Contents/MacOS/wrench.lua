@@ -15,11 +15,13 @@ local configDir = "."
 local last_uploaded_pics = {}
 local weixin_open_homepage
 local file_exists
+local social_need_confirm = false
+local right_button_x = 984
 
 local t1_call, t1_run, t1_adb_mail, t1_save_mail_heads
 local adb_push, adb_pull, adb_install
 local shell_quote, putclip, t1_post, push_text, t1_post2, kill_android_vnc
-local adb_start_activity
+local adb_start_activity, launch_apps, on_app_selected
 local picture_to_weixin_share, picture_to_weibo_share, picture_to_qq_share
 local picture_to_momo_share, t1_add_mms_receiver
 local adb_get_input_window_dump, adb_top_window
@@ -46,12 +48,10 @@ local where_is_dial_key
 local rows_mail_att_finder
 local UNAME_CMD = "uname || busybox uname || { echo -n Lin && echo -n ux; }"
 local is_debugging = false
-local using_scroll_lock = true
 local using_adb_root
 local adb_unquoter
 local is_windows = false
 local debug_set_x = ""
-local ime_height_ref = 874
 local default_width, default_height = 1080, 1920
 local real_width, real_height = 1080, 1920
 local app_width, app_height = 1080,1920
@@ -382,6 +382,9 @@ end
 
 local function adb_event(events)
    if type(events) == 'string' then
+      if social_need_confirm then
+         log("adb_event %s", events)
+      end
       adb_event(split(" ", events))
       return
    end
@@ -513,10 +516,6 @@ yes_or_no_p = function(txt)
 end
 
 check_scroll_lock = function()
-   if using_scroll_lock then
-      return
-   end
-
    local input_method, ime_height, ime_connected, current_input_method
    local function using_wrench_ime()
       input_method, ime_height, ime_connected, current_input_method = adb_get_input_window_dump()
@@ -551,13 +550,21 @@ local function weibo_text_share(window)
    if repost:match('and') then
       adb_event("sleep .1 adb-tap 57 1704")
    end
-   adb_event{'key', 'scroll_lock', 991, 166}
+   adb_event{'key', 'scroll_lock'}
+   if social_need_confirm and not yes_or_no_p("Confirm to share to weibo?") then
+      return
+   end
+   if yes_or_no_p("Share to Weibo?") then
+      adb_event{991, 166}
+   end
 end
 
 local function t1_share_to_weibo(text)
    share_text_to_app("com.sina.weibo", ".composerinde.ComposerDispatchActivity", text)
    wait_input_target(weiboShareActivity)
-   t1_send_action()
+   if yes_or_no_p("Share to Weibo?") then
+      t1_send_action()
+   end
 end
 
 local function t1_share_to_qq(text)
@@ -661,21 +668,69 @@ local function search_mail(what)
       log("Failed to get mail settings")
       return
    end
-   adb_event"key back sleep .5 adb-tap 218 343 sleep .2 key scroll_lock"
+   adb_event"key back sleep .5 adb-tap 218 323 sleep .2 key scroll_lock sleep .5 adb-tap 667 225 sleep .2 adb-tap 667 608"
 end
-
+local function search_and_start_app(what)
+   search_activity = "com.smartisanos.quicksearch/com.android.quicksearchbox.SearchActivity"
+   adb_start_activity(search_activity)
+   putclip_nowait(what)
+   for i = 1, 10 do
+      if wait_input_target_n(1, search_activity) ~= "" then
+         break
+      else
+         log("wait for search_activity: %d", i)
+         if i == 10 then
+            return
+         end
+      end
+   end
+   adb_event"adb-tap 999 127 key scroll_lock"
+end
 local function get_coffee(what)
    for i = 1, 5 do
+      if social_need_confirm and not yes_or_no_p("Will now open the Wechat App and goto it's home page") then
+         return
+      end
       weixin_open_homepage()
       log("Start to click for the favsearch " .. i)
-      adb_event"adb-tap 927 1830 sleep .2 adb-tap 337 772 sleep 1 adb-tap 833 145 sleep .2"
+      if social_need_confirm and not yes_or_no_p("Will now click my way to the Wechat bookmarks") then
+         return
+      end
+
+      if social_need_confirm and not yes_or_no_p("First, click the “My” page") then
+         return
+      end
+
+      adb_event"adb-tap 927 1830 sleep .2"
+
+      if social_need_confirm and not yes_or_no_p("Next, click the “My Favorites” button") then
+         return
+      end
+      adb_event" adb-tap 337 722 sleep 1 "
+
+      if social_need_confirm and not yes_or_no_p("Next, click the “Search” button for the “My Favorites”") then
+         return
+      end
+      adb_event"adb-tap 833 145 sleep .2"
       if adb_top_window() == "com.tencent.mm/com.tencent.mm.plugin.favorite.ui.FavSearchUI" then
          break
       end
       log("Need retry " .. i)
    end
    putclip"我正在使用咕咕机"
-   adb_event"key scroll_lock sleep .5 adb-tap 535 458 sleep 3 adb-tap 15 612"
+
+   if social_need_confirm and not yes_or_no_p("Will now find the 咕咕机 Wechat App") then
+      return
+   end
+   adb_event"key scroll_lock sleep .5 "
+   if social_need_confirm and not yes_or_no_p("Will now open the 咕咕机 Wechat App") then
+      return
+   end
+   adb_event"adb-tap 535 458"
+   if social_need_confirm and not yes_or_no_p("Will now wait for the input ready") then
+      return
+   end
+   adb_event"sleep 3 adb-tap 15 700"
    for i = 1, 50 do
       local input_target = wait_input_target_n(1, "com.tencent.mm/com.tencent.mm.plugin.webview.ui.tools.WebViewUI")
       if input_target:match"com.tencent.mm/com.tencent.mm.plugin.webview.ui.tools.WebViewUI" then
@@ -690,8 +745,16 @@ local function get_coffee(what)
       what = "秦师傅，给我来一杯拿铁，谢谢❤"
    end
    putclip(what)
+
+   if social_need_confirm and not yes_or_no_p("Will now input your order for coffee") then
+      return
+   end
    adb_event"key scroll_lock sleep .5"
-   if yes_or_no_p("确认发送秦师傅咖啡订单？") then
+   if yes_or_no_p("Confirm to order coffee from Shifu Qin？") then
+      if social_need_confirm then
+         yes_or_no_p("I will alarm you in 10 minutes for your coffee")
+         return
+      end
       adb_event"adb-tap 539 957"
       system{'alarm', '10', 'Go get your coffee (take your coffee ticket!)'}
    end
@@ -718,7 +781,7 @@ weixin_open_homepage = function()
             sleep(.1)
             waiting_search = false
             return
-         elseif top_window ~= weixinLauncherActivity then
+         elseif top_window and top_window ~= weixinLauncherActivity then
             log("exit the current '%s' by back key %d", top_window, i)
             waiting_search = false
          end
@@ -934,18 +997,12 @@ adb_get_input_window_dump = function()
    local ime_xy = last(string.gmatch(input_window_dump, "Requested w=%d+ h=%d+"))
    local ime_height = 0
    if input_method_active and ime_xy:match('Requested w=%d+ h=') then
-      ime_height = ime_xy:match('Requested w=%d+ h=(%d+)')
-      if tonumber((ime_height - (real_height - app_height)) * default_height / real_height ) >= 800 then -- new version of google pinyin ime?
-         if input_window_dump:match('package=com.google.android.inputmethod.pinyin') then
-            ime_height = (1920 - 1140) * real_height / default_height + (real_height - app_height)
-         elseif input_window_dump:match('package=com.wrench.inputmethod.pinyin') then
-            ime_height = (1920 - 1125) * real_height / default_height + (real_height - app_height)
-         elseif input_window_dump:match('package=com.google.android.inputmethod.latin') or
-            input_window_dump:match('package=com.android.inputmethod.latin') then
-            ime_height = 800 * real_height / default_height + (real_height - app_height)
-         end
-      end
+      ime_height = app_height * 0.105 * 4
    end
+   -- log("ime_height = %d; real_height = %d; default_height = %d; app_height = %d",
+   --     ime_height, real_height, default_height, app_height)
+
+   ime_height = ime_height * default_height / app_height
 
    local ime_connected = not dump_str:match("mServedInputConnection=null")
    return input_method_active, ime_height, ime_connected, current_input_method
@@ -996,7 +1053,7 @@ adb_start_service_and_wait_file = function(service_cmd, file)
          [[
             rm %s;
             am startservice --user 0 -n %s&
-            for x in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+            for x in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 $(seq 1 40); do
                if test ! -e %s; then
                   sleep .1 || busybox sleep .1;
                else
@@ -1124,7 +1181,7 @@ local check_apk_installed = function(apk, md5)
    if md5_on_phone ~= md5_on_PC then
       log("Need to install on your phone Wrench helper App %s, please make sure your phone allows it.", apk)
       local install_output = adb_install(apk)
-      if install_output:match("\nSuccess") then
+      if install_output:match("\nSuccess") or install_output:match("^Success") then
          adb_push{md5, "/sdcard/" .. md5}
          local md5_on_phone = adb_pipe("cat /sdcard/" .. md5)
          md5_on_phone = md5_on_phone:gsub("\n", "")
@@ -1217,8 +1274,16 @@ t1_config = function(passedConfigDirPath)
    sdk_version = adb_pipe("getprop ro.build.version.sdk")
    brand = adb_pipe("getprop ro.product.brand"):gsub("\n.*", "")
    model = adb_pipe("getprop ro.product.model"):gsub("\n.*", "")
-   arm_arch = adb_pipe("/data/data/com.android.shell/busybox uname -m")
+   arm_arch = adb_pipe("/data/data/com.android.shell/busybox uname -m 2>/dev/null || uname -m")
    androidvncserver = ("androidvncserver-%s.sdk%s"):format(arm_arch, sdk_version)
+
+   codename = adb_pipe("getprop ro.product.codename"):gsub(" ", ".")
+   codenamed_vnc = ("%s.%s"):format(androidvncserver, codename)
+   if file_exists(codenamed_vnc) then
+      androidvncserver = codenamed_vnc
+   end
+
+   log("androidvncserver is %s", androidvncserver)
 
    if file_exists(androidvncserver) then
       check_file_push_and_renamed(androidvncserver, androidvncserver ..  ".md5", "androidvncserver")
@@ -1233,7 +1298,7 @@ t1_config = function(passedConfigDirPath)
        error("Error, you phone's sdk version is " .. sdk_version .. ",  must be at least 16")
    end
    local dump = adb_pipe{'dumpsys', 'window'}
-   real_width = dump:match('init=(%d+x%d+)')
+   real_width = dump:match('cur=(%d+x%d+)')
    real_height = tonumber(real_width:match('x(%d+)'))
    real_width = tonumber(real_width:match('(%d+)x'))
 
@@ -1244,6 +1309,10 @@ t1_config = function(passedConfigDirPath)
    real_width_ratio, real_height_ratio = real_width / default_width, real_height / default_height
    log("app_width_ratio is %f, app_height_ratio is %f ", app_width_ratio, app_height_ratio)
 
+   if app_width ~= default_width then
+      right_button_x = 1080 - 80 * default_width / app_width
+   end
+
    local id = adb_pipe("id")
    if id:match("uid=0") then
       using_adb_root = true
@@ -1251,16 +1320,7 @@ t1_config = function(passedConfigDirPath)
       using_adb_root = false
    end
 
-   local scroll = adb_pipe("getprop persist.smartisan.pastetool")
-   if scroll:match("1") then
-      debugging("pastetool is true")
-      using_scroll_lock = true
-   else
-      using_scroll_lock = false
-      check_apk_installed("WrenchIME.apk", "WrenchIME.apk.md5")
-      debugging("pastetool is false")
-   end
-
+   check_apk_installed("WrenchIME.apk", "WrenchIME.apk.md5")
 
    if passedConfigDirPath then
       configDir = passedConfigDirPath
@@ -1288,7 +1348,7 @@ t1_config = function(passedConfigDirPath)
    end
 
    phone_serial = adb_pipe("getprop ro.serialno"):gsub("\n", "")
-   return ("brand is %s, paste is %s"):format(brand, using_scroll_lock)
+   return ("brand is %s"):format(brand)
 end
 
 get_a_note = function(text)
@@ -1363,9 +1423,9 @@ qq_find_friend = function(friend_name)
    log("qq find friend: %s", friend_name)
    for i = 1, 5 do
       qq_open_homepage()
-      adb_event"sleep .3 adb-tap 391 288"
+      adb_event"sleep .3 adb-tap 324 254"
       local top_window = wait_input_target_n(15, qqChatActivity2, qqGroupSearch)
-      adb_event"key scroll_lock sleep .6"
+      adb_event"key scroll_lock sleep .8"
       if top_window and top_window:match(qqGroupSearch) then
          log"Fonud qqGroupSearch"
          adb_event"adb-tap 365 384"
@@ -1388,7 +1448,7 @@ qq_find_group_friend = function(friend_name)
       log("qq window is not chat: %s", window)
       return
    end
-   adb_event("adb-tap 974 167")
+   adb_event("adb-tap 994 167")
    local chatSetting = "com.tencent.mobileqq/com.tencent.mobileqq.activity.ChatSettingForTroop"
    window = wait_top_activity(chatSetting)
    if window ~= chatSetting then
@@ -1402,24 +1462,33 @@ qq_find_group_friend = function(friend_name)
       log("did not get troopWindow: %s", window)
       return
    end
-   adb_event("sleep .5 adb-tap 243 305")
-   wait_input_target(troopList)
-   adb_event("key scroll_lock key space key DEL sleep .5 adb-tap 326 320")
+
+   for i = 1, 40 do
+         adb_event("sleep .1 adb-tap 243 300")
+         if wait_input_target_n(3, troopList) ~= "" then
+            break
+         else
+            log("wait for troopList input: %d", i)
+         end
+   end
+
+   the_1st_member_click = "adb-tap 326 229"
+   adb_event("key scroll_lock key space key DEL sleep .5 " .. the_1st_member_click)
    local troopMember = "com.tencent.mobileqq/com.tencent.mobileqq.activity.TroopMemberCardActivity"
-   for i = 1, 5 do
+   for i = 1, 10 do
       window = wait_top_activity_n(2, troopMember)
       if window == troopMember then
          break
       else
          log("Did not get into troopMember, try " .. i)
-         adb_event("key space sleep .5 key DEL sleep .5 adb-tap 326 320")
+         adb_event("key space sleep .5 key DEL sleep .5 " .. the_1st_member_click)
          if i == 5 then
             log("Giving up...")
             return
          end
       end
    end
-   adb_event("sleep .5 adb-tap 864 1800")
+   adb_event("sleep " .. .5 * i .. " adb-tap 864 1800")
 end
 
 save_window_types = function()
@@ -1445,7 +1514,7 @@ save_phone_info = function()
 end
 
 kill_android_vnc = function()
-   adb_shell"busybox killall -INT androidvncserver"
+   adb_shell"killall -INT androidvncserver || busybox killall -INT androidvncserver"
 end
 
 file_exists = function(name)
@@ -1455,6 +1524,55 @@ file_exists = function(name)
       return true
    else
       return false
+   end
+end
+
+launch_apps = function()
+   if not file_exists("apps.info") then
+      if adb_start_service_and_wait_file("com.bhj.setclip/.PutClipService --ei listapps 1", "/sdcard/Wrench/apps.info") then
+         adb_pull{"/sdcard/Wrench/apps.info", "apps.info"}
+      else
+         log("Can't get apps.info")
+      end
+   end
+   apps_file = io.open("apps.info")
+   local apps_txt = apps_file:read("*a")
+   local apps = split("\n", apps_txt)
+   local app_table = {}
+   for i = 1, #apps do
+      line = apps[i]
+      local s = split("=", line)
+      local class_ = s[1]
+      local package_ = s[2]
+      app_table[class_] = package_
+      local label_ = s[3]
+      if not file_exists(class_ .. ".png") then
+         adb_pull{"/sdcard/Wrench/" .. class_ .. ".png", class_ .. ".png"}
+      end
+   end
+   apps_file.close()
+   select_apps()
+end
+
+on_app_selected = function(app)
+   apps_file = io.open("apps.info")
+   local apps_txt = apps_file:read("*a")
+   local apps = split("\n", apps_txt)
+   local app_table = {}
+   for i = 1, #apps do
+      line = apps[i]
+      local s = split("=", line)
+      local class_ = s[1]
+      local package_ = s[2]
+      app_table[class_] = package_
+      local label_ = s[3]
+      if not file_exists(class_ .. ".png") then
+         adb_pull{"/sdcard/Wrench/" .. class_ .. ".png", class_ .. ".png"}
+      end
+   end
+   apps_file.close()
+   if app ~= "" then
+      adb_start_activity(("%s/%s"):format(app_table[app], app))
    end
 end
 
@@ -1468,6 +1586,13 @@ t1_post = function(text) -- use weixin
          t1_eval(func)
          return "executed string"
       end
+      if text:match("^#!lua") and text ~= "#!lua" then
+         text = text:sub(string.len("#!lua") + 1)
+         local func = loadstring(text)
+         t1_eval(func)
+         return "executed string"
+      end
+
       if window:match("com.tencent.mobileqq") then
          putclip(emoji_for_qq(text))
       elseif window:match("com.tencent.mm/") then
@@ -1524,7 +1649,7 @@ t1_post = function(text) -- use weixin
       t1_paste()
       return
    else
-      local add, post_button = '', '958 1820'
+      local add, post_button = '', right_button_x .. ' 1820'
       local input_method, ime_height, ime_connected = adb_get_input_window_dump() -- $(adb dumpsys window | perl -ne 'print if m/^\s*Window #\d+ Window\{[a-f0-9]* u0 InputMethod\}/i .. m/^\s*mHasSurface/')
       log("input_method is %s, ime_xy is %s", input_method, ime_height)
       -- debugging("ime_xy is %s", ime_xy)
@@ -1537,7 +1662,7 @@ t1_post = function(text) -- use weixin
       if input_method then
          if ime_height ~= 0 then
             add = ''
-            post_button = ('984 %d'):format(1920 - ime_height - 100)
+            post_button = ('%d %d'):format(right_button_x, 1920 - ime_height - 80)
          end
       else
          if not ime_connected then
@@ -1549,7 +1674,7 @@ t1_post = function(text) -- use weixin
       end
 
       if window == "com.github.mobile/com.github.mobile.ui.issue.CreateCommentActivity" then
-         post_button = '954 166'
+         post_button = right_button_x .. ' 166'
       end
 
       local window_type = window_post_button_map[window]
@@ -1581,7 +1706,7 @@ t1_post = function(text) -- use weixin
       if window_type == 'weixin-chat' then
          post_button = post_button -- empty
       elseif window_type == 'qq-chat' then
-         post_button = ('975 %d'):format(1920 - ime_height - 200)
+         post_button = ('%d %d'):format(right_button_x, 1920 - ime_height - 200)
       elseif window_type == 'weixin-confirm' then
          if yes_or_no_p("Send button is above the input method, on the right end. Confirm?") then
             post_button = post_button
@@ -1589,10 +1714,10 @@ t1_post = function(text) -- use weixin
             post_button = ''
          end
       elseif window_type == 'weibo-share' then
-         post_button = '991 166'
+         post_button = right_button_x .. ' 166'
       elseif window_type == 'weibo-confirm' then
          if yes_or_no_p("Send button is top-right corner of phone's screen. Confirm?") then
-            post_button = '991 166'
+            post_button = right_button_x .. ' 166'
          else
             post_button = ''
          end
@@ -1601,7 +1726,6 @@ t1_post = function(text) -- use weixin
       end
 
       debugging("add is %s", add)
-
       adb_event(string.format("%s key scroll_lock %s", add, post_button))
    end
    return "text sent"
@@ -1760,7 +1884,7 @@ local function picture_to_weixin_chat(pics, ...)
    end
 
    local input_method, ime_height = close_ime()
-   local post_button = ('984 %d'):format(1920 - 50)
+   local post_button = ('%d %d'):format(right_button_x, 1920 - 50)
    local chatWindow = adb_top_window()
    for i = 1, #pics do
       local ext = last(pics[i]:gmatch("%.[^.]+"))
@@ -1840,7 +1964,7 @@ end
 
 local function click_to_album_wx_chat_style(event1, activity1, ...)
    local input_method, ime_height = close_ime()
-   local post_button = ('984 %d'):format(1920 - 50)
+   local post_button = ('%d %d'):format(right_button_x, 1920 - 50)
    local old_top_window = adb_top_window()
 
    adb_event(post_button .. " sleep .2 " .. event1)
@@ -1974,7 +2098,7 @@ local function picture_to_weibo_chat(pics, ...)
    end
 
    local input_method, ime_height = close_ime()
-   local post_button = ('984 %d'):format(1920 - ime_height - 50)
+   local post_button = ('%d %d'):format(right_button_x, 1920 - ime_height - 50)
    for i = 1, #pics do
       local ext = last(pics[i]:gmatch("%.[^.]+"))
       local target = pics[i]
@@ -2328,6 +2452,8 @@ t1_call = function(number)
          t1_find_dingding_contact(who)
       elseif where == "coffee" then
          get_coffee(who)
+      elseif where == "app" then
+         search_and_start_app(who)
       elseif where == "mail" then
          search_mail(who)
       else
@@ -2412,9 +2538,13 @@ local function t1_spread_it()
 end
 
 M = {}
+M.log = log
+M.adb_get_input_window_dump = adb_get_input_window_dump
 M.putclip = putclip
 M.start_weibo_share = start_weibo_share
 M.t1_post = t1_post
+M.launch_apps = launch_apps
+M.on_app_selected = on_app_selected
 M.kill_android_vnc = kill_android_vnc
 M.t1_find_weixin_contact = t1_find_weixin_contact
 M.adb_shell = adb_shell
@@ -2452,6 +2582,19 @@ M.t1_find_qq_contact = t1_find_qq_contact
 M.t1_share_to_qq = t1_share_to_qq
 M.weixin_find_friend = weixin_find_friend
 M.qq_open_homepage = qq_open_homepage
+M.get_coffee = get_coffee
+M.search_and_start_app = search_and_start_app
+
+local function be_quiet()
+   social_need_confirm = false
+end
+
+local function be_verbose()
+   social_need_confirm = true
+end
+
+M.be_verbose = be_verbose
+M.be_quiet = be_quiet
 
 local function do_it()
    if arg and type(arg) == 'table' and string.find(arg[0], "wrench.lua") then
