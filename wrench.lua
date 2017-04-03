@@ -1,10 +1,11 @@
 #!/usr/bin/lua
 
 -- module
-local M
+local M = {}
 
 -- functions
 local WrenchExt = {}
+local shift_click_notification
 local search_sms, string_strip, handle_notification
 local adb_input_method_is_null, close_ime
 local window_post_button_map = {}
@@ -20,8 +21,9 @@ local file_exists
 local social_need_confirm = false
 local right_button_x = 984
 local my_select_args
-local rev_qq_emoji_table
+local start_or_stop_recording, m_is_recording, current_recording_file
 
+local m_focused_app, m_window_dump, m_focused_window
 local t1_call, t1_run, t1_adb_mail, t1_save_mail_heads
 local reset_input_method, adb_shell
 local adb_push, adb_pull, adb_install
@@ -34,7 +36,7 @@ local adb_start_weixin_share, adb_is_window
 local adb_focused_window
 local t1_config, check_phone
 local weixin_find_friend, qq_find_friend, qq_find_group_friend
-local emoji_for_qq, debug, get_a_note, emoji_for_weixin, emoji_for_qq_or_weixin
+local emoji_for_qq, debug, get_a_note, emoji_for_weixin, emoji_rewrite, emoji_for_weibo
 local adb_get_last_pic, debugging
 local adb_weixin_lucky_money
 local adb_weixin_lucky_money_output
@@ -68,9 +70,9 @@ local real_width_ratio, real_height_ratio = real_width / default_width, real_hei
 local using_oppo_os = false
 local brand = "smartisan"
 local model = "T1"
-local qq_emojis, weixin_emojis
+local qq_emojis_remap, weixin_emojis_remap, weibo_emojis_remap
 local sdk_version = 19
-local emojis, emojis_map
+local emojis, img_to_emoji_map, emoji_to_img_map
 local the_true_adb = "./the-true-adb"
 local t1_send_action
 local weixinAlbumPreviewActivity = "com.tencent.mm/com.tencent.mm.plugin.gallery.ui.AlbumPreviewUI"
@@ -99,25 +101,12 @@ local weiboPicFilterActivity = "com.sina.weibo/com.sina.weibo.photoalbum.PicFilt
 local weiboChatActivity = "com.sina.weibo/com.sina.weibo.weiyou.DMSingleChatActivity"
 local notePicPreview = "com.smartisanos.notes/com.smartisanos.notes.Convert2PicturePreviewActivity"
 
-local qq_emoji_table = {
-   "微笑", "撇嘴", "色", "发呆", "得意", "流泪", "害羞", "闭嘴",    "睡", "大哭",
-   "尴尬", "发怒", "调皮", "呲牙", "惊讶", "难过",    "酷", "冷汗", "抓狂", "吐",
-   "偷笑", "可爱", "白眼", "傲慢",    "饥饿", "困", "惊恐", "流汗", "憨笑", "大兵",
-   "奋斗", "咒骂",    "疑问", "嘘", "晕", "折磨", "衰", "骷髅", "敲打", "再见",
-   "擦汗", "抠鼻", "鼓掌", "糗大了", "坏笑", "左哼哼", "右哼哼", "哈欠",    "鄙视", "委屈",
-   "快哭了", "阴险", "亲亲", "吓", "可怜", "菜刀",    "西瓜", "啤酒", "篮球", "乒乓",
-   "咖啡", "饭", "猪头", "玫瑰",    "凋谢", "示爱", "爱心", "心碎", "蛋糕", "闪电",
-   "炸弹", "刀",    "足球", "瓢虫", "便便", "月亮", "太阳", "礼物", "拥抱", "强",
-   "弱", "握手", "胜利", "抱拳", "勾引", "拳头", "差劲", "爱你",    "NO", "OK",
-   "爱情", "飞吻", "跳跳", "发抖", "怄火", "转圈",    "磕头", "回头", "跳绳", "挥手",
-   "激动", "街舞", "献吻", "左太极",    "右太极",    "笑哭", "doge", "泪奔", "无奈", "托腮",
-   "卖萌", "斜眼笑", "喷血", "惊喜", "骚扰", "小纠结", "我最美",    "嘿哈", "奸笑", "捂脸",
-   "机智", "皱眉", "耶",
-}
-
-rev_qq_emoji_table = {}
-for i in ipairs(qq_emoji_table) do
-   rev_qq_emoji_table[qq_emoji_table[i]] = i;
+emojis = require"emojis"
+img_to_emoji_map = {}
+emoji_to_img_map = {}
+for k, v in ipairs(emojis) do
+   img_to_emoji_map[v[3]] = v[1]
+   emoji_to_img_map[v[1]] = v[3]
 end
 
 adb_unquoter = ""
@@ -203,26 +192,23 @@ end
 
 
 emoji_for_qq = function(text)
-   return emoji_for_qq_or_weixin(text, qq_emojis)
+   return emoji_rewrite(text, qq_emojis_remap)
 end
 
-emoji_for_qq_or_weixin = function(text, which_emojis)
+emoji_rewrite = function(text, which_emojis)
    local s = 1
    local replace = ""
    repeat
       local fs, fe = text:find("%[.-%]", s)
       if fs then
-         local emoji = text:sub(fs + 1, fe - 1)
+         local emoji = text:sub(fs, fe)
          log("emoji is %s", emoji)
-         if rev_qq_emoji_table[emoji] then
-            log("qq_emoji_table is %d", rev_qq_emoji_table[emoji])
+         if emoji_to_img_map[emoji] then
             replace = replace .. text:sub(s, fs - 1)
-            if which_emojis == qq_emojis then
-               local idx = rev_qq_emoji_table[emoji]
-               log("which emois is %s", which_emojis[idx])
-               replace = replace .. which_emojis[idx]
+            if which_emojis[emoji] then
+               replace = replace .. which_emojis[emoji]
             else
-               replace = replace .. "/" .. emoji
+               replace = replace .. emoji
             end
             s = fe + 1
          else
@@ -238,7 +224,11 @@ emoji_for_qq_or_weixin = function(text, which_emojis)
 end
 
 emoji_for_weixin = function(text)
-   return emoji_for_qq_or_weixin(text, weixin_emojis)
+   return emoji_rewrite(text, weixin_emojis_remap)
+end
+
+emoji_for_weibo = function(text)
+   return emoji_rewrite(text, weibo_emojis_remap)
 end
 
 local function system(cmds)
@@ -304,16 +294,9 @@ local function replace_img_with_emoji(text, html)
    end
    local n = 2
    local res = texts[1]
-   for emoji in html:gmatch('img src="(.-)"') do
-      debugging("emoji is %s", emoji)
-      if not emojis then
-         emojis = require"emojis"
-         emojis_map = {}
-         for k, v in ipairs(emojis) do
-            emojis_map[v[3]] = v[1]
-         end
-      end
-      emoji = emojis_map[emoji] or "[unknown emoji]"
+   for img in html:gmatch('img src="(.-)"') do
+      debugging("img is %s", img)
+      local emoji = img_to_emoji_map[img] or "[unknown emoji]"
       res = res .. emoji
       if texts[n] then
          res = res .. texts[n]
@@ -404,6 +387,8 @@ adb_start_activity = function(a)
    adb_am("am start -n " .. a)
 end
 
+M.adb_start_activity = adb_start_activity
+
 adb_focused_window = function()
    return adb_top_window() or ""
 end
@@ -447,6 +432,14 @@ local function adb_event(events)
          local width_ratio, height_ratio = app_width_ratio, app_height_ratio
          if (events[i - 1] == 'adb-no-virt-key-tap') then
             width_ratio, height_ratio = real_width_ratio, real_height_ratio
+            if m_is_recording then
+               local record_file = io.open(m_is_recording, "a")
+               local comment = select_args{"You are recording screen operations, please comment this click", "", ""}
+               top_window = adb_top_window()
+               record_file:write(("wait_top_activity_n_ok(5, [[%s]])\n"):format(top_window))
+               record_file:write(('adb_event"adb-tap %d %d" -- %s\n'):format(events[i], events[i+1], comment))
+               record_file:close()
+            end
          end
          local add = ('input tap %d %d;'):format(events[i] * width_ratio, events[i+1] * height_ratio)
          command_str = command_str .. add
@@ -672,6 +665,15 @@ local wait_top_activity_n = function(n_retry, ...)
    return window
 end
 
+M.wait_top_activity_n = wait_top_activity_n
+
+M.wait_top_activity_n_ok = function(n_retry, activity)
+   local window = wait_top_activity_n(n_retry, activity)
+   if window == activity then
+      return true
+   end
+end
+
 wait_top_activity = function(...)
    return wait_top_activity_n(20, ...)
 end
@@ -703,10 +705,10 @@ wait_input_target_n = function(n_loop, ...)
       local window = adb_focused_window()
       for ai = 1, #activities do
          local activity = activities[ai]
-         if window:match(activity) then
-            local adb_window_dump = split("\n", adb_pipe("dumpsys window"))
+         if window:match(activity) or (window:match("^PopupWindow:") and m_focused_app:match(activity)) then
+            local adb_window_dump = split("\n", m_window_dump)
             for x = 1, #adb_window_dump do
-               if adb_window_dump[x]:match("mInputMethodTarget.*"..activity) then
+               if adb_window_dump[x]:match("mInputMethodTarget.*" .. window) then
                   local input_method, ime_height, ime_connected = adb_get_input_window_dump()
                   if ime_connected then
                      local fields = split(" ", adb_window_dump[x])
@@ -724,13 +726,10 @@ end
 
 adb_top_window = function()
    -- dumpsys window|grep mFocusedWindow|perl -npe 's/.*?(\S+)}$/$1/')
-   local adb_window_dump = adb_pipe("dumpsys window")
-   if not adb_window_dump then return nil end
-   local focused_line = adb_window_dump:match("mFocusedWindow=.-}")
-   if not focused_line then return nil end
-   local top_window = focused_line:match("%S+}$")
-   if not top_window then return nil end
-   return top_window:sub(1, -2)
+   m_window_dump = adb_pipe("dumpsys window") or ""
+   m_focused_app = m_window_dump:match("mFocusedApp=Token.-(%S+)%s+%S+}") or ""
+   m_focused_window = m_window_dump:match("mFocusedWindow=.-(%S+)}") or ""
+   return m_focused_window
 end
 
 local function search_mail(what)
@@ -898,7 +897,7 @@ weixin_open_homepage = function()
             sleep(.1)
             waiting_search = false
             return
-         elseif top_window and top_window ~= weixinLauncherActivity then
+         elseif top_window ~= '' and top_window ~= weixinLauncherActivity then
             log("exit the current '%s' by back key %d", top_window, i)
             waiting_search = false
          end
@@ -1050,7 +1049,7 @@ adb_start_weixin_share = function(text_or_image)
    weixin_open_homepage()
    adb_event("adb-tap 654 1850 sleep .5 adb-tap 332 358")
    if wait_top_activity("com.tencent.mm/com.tencent.mm.plugin.sns.ui.SnsTimeLineUI") == "com.tencent.mm/com.tencent.mm.plugin.sns.ui.SnsTimeLineUI" then
-      adb_event("sleep .2 " .. click .. " 961 160")
+      adb_event("sleep .2 " .. click .. " 1016 131")
    else
       log("Can't switch to the Friend Zone page.")
    end
@@ -1080,7 +1079,7 @@ local function weixin_text_share(window, text)
    end
    adb_event("adb-key scroll_lock sleep .2")
    if yes_or_no_p("Share to wechat?") then
-      adb_event(" adb-tap 961 171")
+      adb_event(" adb-tap 1016 131")
    end
 end
 
@@ -1291,6 +1290,8 @@ push_text = function(text)
          text = emoji_for_qq(text)
       end
    end
+
+   text = text:gsub("\n", "\r\n")
    local file, path
    local tmp = os.getenv("TEMP") or "/tmp"
    path = tmp .. package.config:sub(1, 1) .. "lua-smartisan-t1.txt"
@@ -1391,46 +1392,15 @@ t1_config = function(passedConfigDirPath)
 
    adb_shell"mkdir -p /sdcard/Wrench"
    local uname = adb_pipe(UNAME_CMD)
+
    if not uname:match("Linux") then
-      local home = os.getenv("HOME")
-      if is_windows then
-         home = os.getenv("USERPROFILE")
-      end
-      if not home or home == "" or home == "/" then
-         error("Your HOME environment variable is not set up correctly: '" .. home .. "'")
-      end
-      local dot_android = home .. package.config:sub(1, 1) .. ".android"
-      if is_windows then
-         system{"md", dot_android}
-      else
-         system{"mkdir", "-p", dot_android}
-      end
-      local ini = dot_android .. package.config:sub(1, 1) .. "adb_usb.ini"
-      local ini_file = io.open(ini, "r")
-      local done_vid = true
-      if not ini_file then
-         done_vid = false
-      else
-         local ini_lines = ini_file:read("*a")
-         if ini_lines ~= "0x29a9\n" then
-            done_vid = false
-         end
-         ini_file:close()
-      end
-      if not done_vid then
-         local err
-         ini_file, err = io.open(ini, "w")
-         if not ini_file then
-            error("can't open " .. ini .. ": " .. err)
-         end
-         ini_file:write("0x29a9\n")
-         ini_file:close()
-         adb_kill_server()
-         error("Done config for your adb devices, please try again")
-      else
-         error(string.format("No phone found, can't set up, uname is: '%s', ANDROID_SERIAL is '%s'", uname, os.getenv("ANDROID_SERIAL")))
-      end
+      error("Phone uname is not Linux")
    end
+
+   if not file_exists("apps.info") then
+      M.update_apps()
+   end
+
    check_apk_installed("Setclip.apk", "Setclip.apk.md5")
    check_file_pushed("am.jar", "am.jar.md5")
    check_file_pushed("busybox", "busybox.md5")
@@ -1727,13 +1697,11 @@ file_exists = function(name)
    end
 end
 
-launch_apps = function()
-   if not file_exists("apps.info") then
-      if adb_start_service_and_wait_file("com.bhj.setclip/.PutClipService --ei listapps 1", "/sdcard/Wrench/apps.info") then
-         adb_pull{"/sdcard/Wrench/apps.info", "apps.info"}
-      else
-         log("Can't get apps.info")
-      end
+M.update_apps = function()
+   if adb_start_service_and_wait_file("com.bhj.setclip/.PutClipService --ei listapps 1", "/sdcard/Wrench/apps.info") then
+      adb_pull{"/sdcard/Wrench/apps.info", "apps.info"}
+   else
+      log("Can't get apps.info")
    end
    apps_file = io.open("apps.info")
    local apps_txt = apps_file:read("*a")
@@ -1751,6 +1719,12 @@ launch_apps = function()
       end
    end
    apps_file.close()
+end
+
+launch_apps = function()
+   if not file_exists("apps.info") then
+      M.update_apps()
+   end
    select_apps()
 end
 
@@ -1782,6 +1756,47 @@ if not dofile_res then
    WrenchExt = {}
 end
 
+local post_weibo_answer = function(text)
+   texts = split("\n\n", text)
+   for _, p in ipairs(texts) do
+      putclip(p)
+      adb_event("sleep 1 key scroll_lock sleep .2 key enter sleep .5")
+   end
+end
+
+local shouldNotPostActivitys = {
+   "com.tencent.mobileqq/com.tencent.mobileqq.activity.aio.photo.AIOGalleryActivity",
+   "com.tencent.mm/com.tencent.mm.ui.chatting.gallery.ImageGalleryUI",
+   "StatusBar",
+}
+
+local function postAfterBackKey(window)
+   for _, w in ipairs(shouldNotPostActivitys) do
+      if window == w then
+         adb_event"key back sleep .2"
+         t1_post()
+         return true
+      end
+   end
+   return false
+end
+
+start_or_stop_recording = function()
+   if not m_is_recording then
+      m_is_recording = select_args{"What function do you want to record to?", "", ""}
+      if (m_is_recording ~= "") then
+         m_is_recording = m_is_recording:gsub("[^a-z0-9_A-Z]", "_")
+         m_is_recording = configDir .. package.config:sub(1, 1) .. m_is_recording .. ".lua"
+      else
+         prompt_user("Must provide a name to record it")
+         m_is_recording = nil
+      end
+   else
+      m_is_recording = nil
+   end
+
+end
+
 t1_post = function(text) -- use weixin
    local window = adb_focused_window()
    debug("sharing text: %s for window: %s", text, window)
@@ -1803,6 +1818,8 @@ t1_post = function(text) -- use weixin
          putclip(emoji_for_qq(text))
       elseif window:match("com.tencent.mm/") then
          putclip(emoji_for_weixin(text))
+      elseif window:match("com.sina.weibo/") then
+         putclip(emoji_for_weibo(text))
       else
          putclip(text)
       end
@@ -1811,7 +1828,18 @@ t1_post = function(text) -- use weixin
       sleep(.5)
        window = adb_focused_window()
    end
-   if window then print("window is " .. window) end
+
+   if window == "com.sina.weibo/com.sina.weibo.qac.answer.AnswerComposerActivity" then
+      post_weibo_answer(text)
+      return
+   end
+
+   if window then print("window is %s", window) end
+
+   if string.match(window, "^PopupWindow:") then
+      window = m_focused_app
+   end
+
    if window == "com.immomo.momo/com.immomo.momo.android.activity.feed.PublishFeedActivity"
       or (window:match("^com.sina.weibo/") and not window:match("com.sina.weibo/com.sina.weibo.weiyou.DMSingleChatActivity"))
    then
@@ -1828,9 +1856,7 @@ t1_post = function(text) -- use weixin
       end
       t1_post()
       return
-   elseif window == "com.tencent.mm/com.tencent.mm.ui.chatting.gallery.ImageGalleryUI" then
-      adb_event"key back sleep .2"
-      t1_post()
+   elseif postAfterBackKey(window) then
       return
    elseif window == "com.google.android.gm/com.google.android.gm.ComposeActivityGmail" then
       adb_event("key scroll_lock adb-tap 870 173")
@@ -1855,9 +1881,6 @@ t1_post = function(text) -- use weixin
    window == emailSmartisanActivity then
       t1_mail(window)
       return
-   elseif string.match(window, "^PopupWindow:") then
-      t1_paste()
-      return
    else
       local add, post_button = '', right_button_x .. ' 1850'
       local input_method, ime_height, ime_connected = adb_get_input_window_dump() -- $(adb dumpsys window | perl -ne 'print if m/^\s*Window #\d+ Window\{[a-f0-9]* u0 InputMethod\}/i .. m/^\s*mHasSurface/')
@@ -1876,9 +1899,11 @@ t1_post = function(text) -- use weixin
          end
       else
          if not ime_connected then
-            adb_event("560 1840")
+            adb_event("540 1840")
             wait_input_target(window)
-            adb_event("key back sleep .2")
+            if not adb_top_window():match("^PopupWindow") then
+               adb_event("key back sleep .2")
+            end
             add = ''
          end
       end
@@ -1888,8 +1913,15 @@ t1_post = function(text) -- use weixin
       end
 
       local window_type = window_post_button_map[window]
+      if not window_type and (
+         window:match("^com.tencent.mm/com.tencent.mm.ui.chatting.") or -- weixin chat with a friend open from group members
+            window:match("^com.tencent.mm/com.tencent.mm.plugin.sns.ui.") -- weixin moments comment
+      ) then
+         window_type = 'weixin-chat'
+      end
+
       if not window_type then
-         window_type = select_args{'Where is the send button',
+         window_type = select_args{'Where is the send button for ' .. window,
                                    'Above the input method, the right end',
                                    'Above the input method, the right end, with a row of buttons in between (like QQ)',
                                    'Above the input method, the right end, confirm before send',
@@ -2116,7 +2148,7 @@ local function picture_to_weixin_chat(pics, ...)
                debug("chatWindow: clicked")
                wait_top_activity(weixinAlbumPreviewActivity)
             elseif window == weixinAlbumPreviewActivity then
-               adb_event("adb-tap 521 398")
+               adb_event("adb-tap 521 398") -- to get into image preview
                sleep(.2)
             elseif window == weixinImagePreviewActivity then
                adb_event("sleep .1 adb-key back")
@@ -2130,9 +2162,9 @@ local function picture_to_weixin_chat(pics, ...)
          end
       end
       local pic_share_buttons = {
-         "adb-tap 614 281", "adb-tap 1000 260", "adb-tap 268 629",
-         "adb-tap 652 645", "adb-tap 1004 632", "adb-tap 301 1008",
-         "adb-tap 612 996", "adb-tap 1006 992", "adb-tap 265 1346",
+         "adb-tap 316 260", "adb-tap 614 281", "adb-tap 1000 260",
+         "adb-tap 268 629", "adb-tap 652 645", "adb-tap 1004 632",
+         "adb-tap 301 1008", "adb-tap 612 996", "adb-tap 1006 992",
       }
       local i_button = pic_share_buttons[i]
       adb_event(i_button)
@@ -2141,7 +2173,10 @@ local function picture_to_weixin_chat(pics, ...)
       adb_event("sleep .1 adb-tap 944 1894 sleep .1")
       wait_top_activity(weixinImagePreviewActivity)
    end
-   adb_event("sleep .2 adb-tap 59 1871 sleep .1 adb-tap 927 148")
+   adb_event("sleep .2 adb-tap 423 1861 sleep .1 ")
+   if yes_or_no_p("Confirm to send these images?") then
+      adb_event("adb-tap 927 148")
+   end
    window = wait_top_activity(chatWindow)
    if window == weixinImagePreviewActivity then
       adb_event("sleep .1 adb-tap 59 1871 sleep .1 adb-tap 927 148")
@@ -2345,7 +2380,7 @@ local function picture_to_weibo_chat(pics, ...)
    adb_event("key back")
 end
 
-local function t1_picture(...)
+local function wrench_picture(...)
    local pics = upload_pics(...)
    local window = adb_focused_window()
    if window == weixinLauncherActivity then
@@ -2678,6 +2713,11 @@ t1_call = function(number)
          find_weibo_friend(who)
       elseif where == "sms" then
          search_sms(who)
+      elseif where == "ext" then
+         t1_run(configDir .. package.config:sub(1, 1) .. who .. ".lua")
+      elseif where == "eval" then
+         local func = loadstring(who)
+         t1_eval(func)
       else
          prompt_user("Don't know how to do it: " .. where)
       end
@@ -2725,7 +2765,7 @@ end
 
 t1_run = function (file)
    local ext = file:gsub(".*%.", "")
-   if ext ~= "twa" and ext ~= "小扳手" then
+   if ext ~= "twa" and ext ~= "小扳手" and ext ~= "lua" then
       return "Can not run this script, must be a .twa file"
    end
    local f = loadfile(file)
@@ -2759,8 +2799,25 @@ local function t1_spread_it()
    adb_event("sleep .5 adb-key back sleep .5")
 end
 
-M = {}
+shift_click_notification = function(pkg, key, title, text)
+   if pkg == "com.tencent.mm" then
+      t1_call(title .. "@@wx")
+   elseif pkg == "com.tencent.mobileqq" then
+      local sender = ""
+      if title:lower() == "qq" then
+         sender = text:gsub(":.*", "")
+      else
+         title = title:gsub(" %(%d+条新消息%)$", "")
+         title = title:gsub(" %(%d+条以上新消息%)$", "")
+         sender = title or ""
+      end
+
+      t1_call(sender .. "@@qq")
+   end
+end
+
 M.log = log
+M.shift_click_notification = shift_click_notification
 M.open_weixin_scan = open_weixin_scan
 M.adb_get_input_window_dump = adb_get_input_window_dump
 M.putclip = putclip
@@ -2772,7 +2829,7 @@ M.kill_android_vnc = kill_android_vnc
 M.t1_find_weixin_contact = t1_find_weixin_contact
 M.adb_shell = adb_shell
 M.adb_pipe = adb_pipe
-M.t1_picture = t1_picture
+M.wrench_picture = wrench_picture
 M.t1_follow_me = t1_follow_me
 M.t1_share_to_weibo = t1_share_to_weibo
 M.t1_share_to_weixin = t1_share_to_weixin
@@ -2816,6 +2873,31 @@ local function be_verbose()
    social_need_confirm = true
 end
 
+local function isWeixinLuckyMoneyReceiver(window)
+   if window == "com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.LuckyMoneyReceiveUI" or (
+      window:match("^com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.") and
+         window ~= "com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.LuckyMoneyDetailUI"
+   ) then
+      log("got lucky window %s", window)
+      return true
+   end
+   return false
+end
+
+local function sayThankYouForLuckyMoney()
+   for i = 1, 20 do
+      adb_event"sleep 1 adb-key back sleep 1"
+      top_window = adb_top_window()
+      log("Got after luck window: %s", top_window)
+      if not top_window:match("^com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.") and
+      not top_window:match("^com.tencent.mobileqq/cooperation.qwallet.") then
+         t1_post("谢谢老板的红包🤓")
+         sleep(1)
+         break
+      end
+   end
+end
+
 local function clickForWeixinMoney()
    log("Click for weixin money")
 
@@ -2834,7 +2916,7 @@ local function clickForWeixinMoney()
          adb_event"adb-tap 327 1395"
       end
       adb_event "sleep .1"
-      if adb_top_window() == "com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.LuckyMoneyReceiveUI" then
+      if isWeixinLuckyMoneyReceiver(adb_top_window()) then
          break
       end
    end
@@ -2844,20 +2926,25 @@ local function clickForWeixinMoney()
       top_window = adb_top_window()
       if top_window == "com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.LuckyMoneyDetailUI" then
          break
-      elseif top_window ~= "com.tencent.mm/com.tencent.mm.plugin.luckymoney.ui.LuckyMoneyReceiveUI" then
+      elseif not isWeixinLuckyMoneyReceiver(top_window) then
          break
       end
    end
+
+   sayThankYouForLuckyMoney()
    adb_event"adb-key back adb-key back sleep .5 adb-key home"
 end
 
-clickForQqMoney = function()
+clickForQqMoney = function(title, text)
    log("Click for QQ money")
    for i = 1, 20 do
       top_window = adb_top_window()
       if top_window and not top_window:match("^com.tencent.mobileqq/") then
          sleep(.1)
       else
+         if title == "QQ" then
+            adb_event"adb-tap 641 405 sleep .5" -- assume it's the first chat:D
+         end
          break
       end
    end
@@ -2866,6 +2953,7 @@ clickForQqMoney = function()
       adb_event"adb-tap 306 1398 adb-tap 179 1587 adb-tap 951 1762"
       adb_event "sleep .1"
       if adb_top_window() == "com.tencent.mobileqq/cooperation.qwallet.plugin.QWalletPluginProxyActivity" then
+         sayThankYouForLuckyMoney()
          break
       end
    end
@@ -2890,7 +2978,7 @@ handle_notification = function(key, pkg, title, text)
       clickForWeixinMoney()
    elseif pkg == "com.tencent.mobileqq" and text:match("%[QQ红包%]") then
       clickNotification{key}
-      clickForQqMoney()
+      clickForQqMoney(title, text)
    end
 
    if not should_use_internal_pop then
@@ -2912,6 +3000,7 @@ M.handle_notification = handle_notification
 M.my_select_args = my_select_args
 M.my_show_notifications = my_show_notifications
 M.yes_or_no_p = yes_or_no_p
+M.start_or_stop_recording = start_or_stop_recording
 
 local function do_it()
    if arg and type(arg) == 'table' and string.find(arg[0], "wrench.lua") then
@@ -2947,37 +3036,67 @@ local function do_it()
    end
 end
 
-weixin_emojis = {
-   "/::)", "/::~", "/::B", "/::|", "/:8-)", "/::<", "/::$", "/::X", "/::Z", "/::'(",
-   "/::-|", "/::@", "/::P", "/::D", "/::O", "/::(", "/::+", "/:--b", "/::Q", "/::T",
-   "/:,@P", "/:,@-D", "/::d", "/:,@o", "/::g", "/:|-)", "/::!", "/::L", "/::>", "/::,@",
-   "/:,@f", "/::-S", "/:?", "/:,@x", "/:,@@", "/::8", "/:,@!", "/:!!!", "/:xx", "/:bye",
-   "/:wipe", "/:dig", "/:handclap", "/:&-(", "/:B-)", "/:<@", "/:@>", "/::-O", "/:>-|", "/:P-(",
-   "/::'|", "/:X-)", "/::*", "/:@x", "/:8*", "/:pd", "/:<W>", "/:beer", "/:basketb", "/:oo",
-   "/:coffee", "/:eat", "/:pig", "/:rose", "/:fade", "/:showlove", "/:heart", "/:break", "/:cake", "/:li",
-   "/:bome", "/:kn", "/:footb", "/:ladybug", "/:shit", "/:moon", "/:sun", "/:gift", "/:hug", "/:strong",
-   "/:weak", "/:share", "/:v", "/:@)", "/:jj", "/:@@", "/:bad", "/:lvu", "/:no", "/:ok",
-   "/:love", "/:<L>", "/:jump", "/:shake", "/:<O>", "/:circle", "/:kotow", "/:turn", "/:skip", "/:oY",
-   "/:#-0", "/:hiphot", "/:kiss", "/:<&", "/:&>",
-   "[笑哭]", "[doge]", "[泪奔]", "[无奈]", "[托腮]", "[卖萌]", "[斜眼笑]", "[喷血]", "[惊喜]", "[骚扰]", "[小纠结]", "[我最美]",
-   "[嘿哈]", "[奸笑]", "[捂脸]", "[机智]", "[皱眉]", "[耶]",
+weixin_emojis_remap = {
+   ["[可爱]"] = '[Joyful]', ["[大兵]"] = "[Commando]", ["[折磨]"] = "[Tormented]", ["[示爱]"] = "[Lips]", ["[挥手]"] = "[Surrender]",
+   ["[街舞]"] = "[Meditate]", ['[笑哭]'] = '😂', ['[斜眼笑]'] = '[奸笑]',
+
 }
 
-qq_emojis = {
-   [[]], [[(]], [[]], [[+]], [[]], [[	]], [[]], [[j]], [[#]], [[ú]],
-   [[]], [[]], [[]], [[ ]], [[!]], [[ ]], [[]], [[]], [[]] .. "\r", [[]],
-   [[]], [[]], [[]], [[]], [[Q]], [[R]], [[]] .. "\x1a", [[]], [[%]], [[2]],
-   [[*]], [[S]], [["]], [[]], [[1]], [[T]], [[']], [[N]], [[]], [[]],
-   [[]], [[U]], [[V]], [[W]], [[.]], [[X]], [[]] .. "\x2c", [[Y]], [[0]], [[]],
-   [[Z]], [[)]], [[$]], [[[]], [[3]], [[]], [[<]], [[=]], [[\]], [=[]]=],
-   [[B]], [[:]], [[]], [[]], [[9]], [[]], [[]], [[J]], [[;]], [[P]],
-   [[]], [[F]], [[M]], [[>]], [[]], [[D]], [[K]], [[L]], [[-]], [[4]],
-   [[5]], [[6]], [[7]], [[8]], [[?]], [[I]], [[H]], [[A]], [[^]], [[@]],
-   [[&]], [[/]], [[_]], [[G]], [[`]], [[a]], [[b]], [[c]], [[d]], [[O]],
-   [[e]], [[f]], [[g]], [[h]], [[i]], [[®]], [[«]], [[¥]], [[¦]], [[¡]],
-   [[§]], [[ª]], [[©]], [[¬]], [[­]], [[¨]], [[¯]], "[嘿哈]", "[奸笑]", "[捂脸]",
-   "[机智]", "[皱眉]", "[耶]",
+weibo_emojis_remap = {
+   ["[加油]"] = '💪', ['[勾引]'] = '[来]', ['[OK]'] = '[ok]', ['[强]'] = '[good]', ['[爱你]'] = '[haha]',
+   ['[飞吻]'] = '[爱你]', ['[抱拳]'] = '[作揖]', ['[心碎]'] = '[伤心]', ['[爱心]'] = '[心]', ['[发呆]'] = '[傻眼]',
+   ['[玫瑰]'] = '[鲜花]', ['[拥抱]'] = '[抱抱]', ['[呲牙]'] = '[嘻嘻]', ['[憨笑]'] = '[哈哈]', ['[笑哭]'] = '[笑cry]',
+   ['[调皮]'] = '[挤眼]', ['[流泪]'] = '[泪]', ['[快哭了]'] = '[悲伤]', ['[抠鼻]'] = '[挖鼻]', ['[发怒]'] = '[怒]',
+   ['[咒骂]'] = '[怒骂]', ['[流汗]'] = '[汗]', ['[惊恐]'] = '[吃惊]', ['[睡觉]'] = '[睡]', ['[糗大了]'] = '[打脸]',
+   ['[难过]'] = '[失望]', ['[再见]'] = '[拜拜]', ['[胜利]'] = '[耶]', ['[无奈]'] = '[摊手]',
 }
+
+qq_emojis_remap = {
+   ["[微笑]"] = [[]], ["[撇嘴]"] = [[(]], ["[色]"] = [[]], ["[发呆]"] = [[+]], ["[得意]"] = [[]],
+   ["[流泪]"] = [[	]], ["[害羞]"] = [[]], ["[闭嘴]"] = [[j]], ["[睡]"] = [[#]], ["[大哭]"] = [[ú]],
+   ["[尴尬]"] = [[]], ["[发怒]"] = [[]], ["[调皮]"] = [[]], ["[呲牙]"] = [[ ]], ["[惊讶]"] = [[!]],
+   ["[难过]"] = [[ ]], ["[酷]"] = [[]], ["[冷汗]"] = [[]], ["[抓狂]"] = [[]] .. "\r", ["[吐]"] = [[]],
+   ["[偷笑]"] = [[]], ["[可爱]"] = [[]], ["[白眼]"] = [[]], ["[傲慢]"] = [[]], ["[饥饿]"] = [[Q]],
+   ["[困]"] = [[R]], ["[惊恐]"] = [[]] .. "\x1a", ["[流汗]"] = [[]], ["[憨笑]"] = [[%]], ["[大兵]"] = [[2]],
+   ["[奋斗]"] = [[*]], ["[咒骂]"] = [[S]], ["[疑问]"] = [["]], ["[嘘]"] = [[]], ["[晕]"] = [[1]],
+   ["[折磨]"] = [[T]], ["[衰]"] = [[']], ["[骷髅]"] = [[N]], ["[敲打]"] = [[]], ["[再见]"] = [[]],
+   ["[擦汗]"] = [[]], ["[抠鼻]"] = [[U]], ["[鼓掌]"] = [[V]], ["[糗大了]"] = [[W]], ["[坏笑]"] = [[.]],
+   ["[左哼哼]"] = [[X]], ["[右哼哼]"] = [[]] .. "\x2c", ["[哈欠]"] = [[Y]], ["[鄙视]"] = [[0]], ["[委屈]"] = [[]],
+   ["[快哭了]"] = [[Z]], ["[阴险]"] = [[)]], ["[亲亲]"] = [[$]], ["[吓]"] = [[[]], ["[可怜]"] = [[3]],
+   ["[菜刀]"] = [[]], ["[西瓜]"] = [[<]], ["[啤酒]"] = [[=]], ["[篮球]"] = [[\]], ["[乒乓]"] = [=[]]=],
+   ["[咖啡]"] = [[B]], ["[饭]"] = [[:]], ["[猪头]"] = [[]], ["[玫瑰]"] = [[]], ["[凋谢]"] = [[9]],
+   ["[示爱]"] = [[]], ["[爱心]"] = [[]], ["[心碎]"] = [[J]], ["[蛋糕]"] = [[;]], ["[闪电]"] = [[P]],
+   ["[炸弹]"] = [[]], ["[刀]"] = [[F]], ["[足球]"] = [[M]], ["[瓢虫]"] = [[>]], ["[便便]"] = [[]],
+   ["[月亮]"] = [[D]], ["[太阳]"] = [[K]], ["[礼物]"] = [[L]], ["[拥抱]"] = [[-]], ["[强]"] = [[4]],
+   ["[弱]"] = [[5]], ["[握手]"] = [[6]], ["[胜利]"] = [[7]], ["[抱拳]"] = [[8]], ["[勾引]"] = [[?]],
+   ["[拳头]"] = [[I]], ["[差劲]"] = [[H]], ["[爱你]"] = [[A]], ["[NO]"] = [[^]], ["[OK]"] = [[@]],
+   ["[爱情]"] = [[&]], ["[飞吻]"] = [[/]], ["[跳跳]"] = [[_]], ["[发抖]"] = [[G]], ["[怄火]"] = [[`]],
+   ["[转圈]"] = [[a]], ["[磕头]"] = [[b]], ["[回头]"] = [[c]], ["[跳绳]"] = [[d]], ["[挥手]"] = [[O]],
+   ["[激动]"] = [[e]], ["[街舞]"] = [[f]], ["[献吻]"] = [[g]], ["[左太极]"] = [[h]], ["[右太极]"] = [[i]],
+   ["[笑哭]"] = [[®]], ["[doge]"] = [[«]], ["[泪奔]"] = [[¥]], ["[无奈]"] = [[¦]], ["[托腮]"] = [[¡]],
+   ["[卖萌]"] = [[§]], ["[斜眼笑]"] = [[ª]], ["[喷血]"] = [[©]], ["[惊喜]"] = [[¬]], ["[骚扰]"] = [[­]],
+   ["[小纠结]"] = [[¨]], ["[我最美]"] = [[¯]],
+}
+
+unicode_remap = {
+   ["[微笑]"] = [[🙂]], ["[撇嘴]"] = [[😒]], ["[色]"] = [[😍]], ["[发呆]"] = [[😳]], ["[得意]"] = [[😎]],
+   ["[流泪]"] = [[😭]], ["[害羞]"] = [[☺]], ["[闭嘴]"] = [[🤐]], ["[睡]"] = [[😴]], ["[大哭]"] = [[😭]],
+   ["[尴尬]"] = [[😓]], ["[发怒]"] = [[😠]], ["[调皮]"] = [[😜]], ["[呲牙]"] = [[😬]], ["[惊讶]"] = [[😮]],
+   ["[难过]"] = [[☹]], ["[酷]"] = [[🕶]], ["[冷汗]"] = [[😳]], ["[抓狂]"] = [[😆]], ["[吐]"] = [[😖]],
+   ["[偷笑]"] = [[😇]], ["[可爱]"] = [[😊]], ["[白眼]"] = [[🙄]], ["[傲慢]"] = [[😤]], ["[饥饿]"] = [[😋]],
+   ["[困]"] = [[😪]], ["[惊恐]"] = [[😱]], ["[流汗]"] = [[😰]], ["[憨笑]"] = [[😄]], ["[大兵]"] = [[👮]],
+   ["[奋斗]"] = [[💪]], ["[咒骂]"] = [[😾]], ["[疑问]"] = [[🤖]], ["[嘘]"] = [[🤐]], ["[晕]"] = [[🙃]],
+   ["[折磨]"] = [[😝]], ["[衰]"] = [[💀]], ["[骷髅]"] = [[☠]], ["[敲打]"] = [[🔨]], ["[再见]"] = [[🤗]],
+   ["[擦汗]"] = [[😓]], ["[抠鼻]"] = [[😐]], ["[鼓掌]"] = [[👏]], ["[糗大了]"] = [[👺]], ["[坏笑]"] = [[😏]],
+   ["[左哼哼]"] = [[⚒]], ["[右哼哼]"] = [[🛠]], ["[哈欠]"] = [[😫]], ["[鄙视]"] = [[😑]], ["[委屈]"] = [[🙄]],
+   ['[笑哭]'] = '😂', ['[流泪]'] = '😭', ['[快哭了]'] = '😞', ['[爱心]'] = '♥', ['[心碎]'] = '💔',
+   ['[礼物]'] = '🎁', ['[微笑]'] = '🙂', ['[撇嘴]'] = '😒', ['[发呆]'] = '', ['[得意]'] = '😎',
+   ['[害羞]'] = '☺', ['[色]'] = '😍', ['[调皮]'] = '😜', ['[闭嘴]'] = '🙊', ['[污]'] = '🙈',
+   ['[睡]'] = '😴', ['[大哭]'] = '😭', ['[尴尬]'] = '😰', ['[发怒]'] = '😠', ['[呲牙]'] = '😁',
+   ['[惊讶]'] = '😮', ['[难过]'] = '😞', ['[酷]'] = '😎', ['[冷汗]'] = '😳', ['[抓狂]'] = '😆',
+   ['[吐]'] = '😖',
+}
+
 
 return do_it()
 
