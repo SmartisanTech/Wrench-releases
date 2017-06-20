@@ -14,11 +14,10 @@ local file_exists = function(name)
    end
 end
 
-if os.getenv("HOME") then
-   private_ext_file = os.getenv("HOME") .. "/src/github/private-config/etc/wrench-ext.lua"
-else
-   private_ext_file = ""
-end
+local dofile_res = nil
+local configDir = os.getenv("WRENCH_CONFIG_DIR")
+
+private_ext_file = configDir .. package.config:sub(1, 1) .. "my-wrench-ext.lua"
 
 if file_exists(private_ext_file) then
    dofile_res, private_config = pcall(dofile, private_ext_file)
@@ -35,13 +34,43 @@ local ignored_pkgs = {
    "com.github.shadowsocks",
 }
 
-is_useful_notification = function(key, pkg, title, text)
+function is_dup(s1, s2)
+   if s2:len() > s1:len() then
+      s1, s2 = s2, s1
+   end
+
+   if s1:sub(1, s2:len()) == s2 or s1:sub(-s2:len()) == s2 then
+      return true
+   end
+
+   return false
+end
+
+M.rewrite_notification_text = function(key, pkg, title, text, ticker)
+   if pkg == "com.tencent.mobileqq" then
+      return ticker
+   end
+
+   if pkg == "com.android.mms" and title:match("通の新しいメッセージ") then
+      return ticker
+   end
+   if ticker ~= "" and not is_dup(ticker, text) then
+      return ("%s ticker(%s)"):format(text, ticker)
+   end
+   return text
+end
+
+is_useful_notification = function(key, pkg, title, text, ticker)
    if private_config.is_useful_notification and
    private_config.is_useful_notification(key, pkg, title, text) == 0 then
       return 0
    end
 
-   if title == "no title" or text == "no text" then
+   if title == "" or (text == "" and ticker == "") then
+      return 0
+   end
+
+   if text == "" and title == ticker and title:match("件の新しいメール") then
       return 0
    end
 
@@ -75,25 +104,24 @@ M.configs = {
    ["vnc-server-command"] = "/data/data/com.android.shell/androidvncserver",
 }
 
-local dofile_res = nil
-dofile_res, vpn_mode = pcall(dofile, "vpn-mode.lua")
+dofile_res, vnc_mode = pcall(dofile, configDir .. package.config:sub(1, 1) .. "vnc-mode.lua")
 if not dofile_res then
-   vpn_mode = "横屏高清"
+   vnc_mode = "演示模式"
 end
 
-if vpn_mode ~= "演示模式" then
+if vnc_mode ~= "演示模式" then
    M.configs["vnc-server-command"] = "/data/data/com.android.shell/androidvncserver -s 100"
    M.configs["allow-vnc-resize"] = "true"
-   if vpn_mode == "横屏高清" then
+   if vnc_mode == "横屏高清" then
       M.configs["phone-width"] = 1920
       M.configs["phone-height"] = 1080
-   elseif vpn_mode == "竖屏高清" then
+   elseif vnc_mode == "竖屏高清" then
       M.configs["phone-width"] = 1080
       M.configs["phone-height"] = 1920
    end
 end
 
-M.configs['vpn_mode'] = vpn_mode
+M.configs['vnc_mode'] = vnc_mode
 
 M.getConfig = function(config)
    -- if true then return "" end
