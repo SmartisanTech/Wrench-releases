@@ -29,6 +29,7 @@ end
 local ignored_pkgs = {
    "com.google.android.apps.maps",
    "android",
+   "com.android.settings",
    "com.bhj.setclip",
    "com.android.systemui",
    "com.github.shadowsocks",
@@ -70,7 +71,12 @@ is_useful_notification = function(key, pkg, title, text, ticker)
       return 0
    end
 
-   if text == "" and title == ticker and title:match("件の新しいメール") then
+   if text == "" and title == ticker and
+      (
+         title:match("件の新しいメール") or
+            title:match("封新邮件")
+      )
+   then
       return 0
    end
 
