@@ -63,7 +63,7 @@ end
 
 is_useful_notification = function(key, pkg, title, text, ticker)
    if private_config.is_useful_notification and
-   private_config.is_useful_notification(key, pkg, title, text) == 0 then
+   private_config.is_useful_notification(key, pkg, title, text, ticker) == 0 then
       return 0
    end
 
@@ -93,6 +93,13 @@ is_useful_notification = function(key, pkg, title, text, ticker)
    return 1;
 end
 
+M.should_not_pick_money = function(key, pkg, title, text)
+   if private_config.should_not_pick_money then
+      return private_config.should_not_pick_money(key, pkg, title, text)
+   end
+   return 0
+end
+
 should_use_internal_pop = function()
    if private_config.should_use_internal_pop then
       return private_config.should_use_internal_pop()
@@ -103,6 +110,12 @@ end
 M.is_useful_notification = is_useful_notification
 M.should_use_internal_pop = should_use_internal_pop
 
+M.notification_arrived = function(key, pkg, title, text)
+   if private_config.notification_arrived then
+      private_config.notification_arrived(key, pkg, title, text)
+   end
+end
+
 M.configs = {
    ["phone-width"] = 1080,
    ["phone-height"] = 1920,
@@ -111,20 +124,15 @@ M.configs = {
 }
 
 dofile_res, vnc_mode = pcall(dofile, configDir .. package.config:sub(1, 1) .. "vnc-mode.lua")
-if not dofile_res then
-   vnc_mode = "演示模式"
-end
-
-if vnc_mode ~= "演示模式" then
-   M.configs["vnc-server-command"] = "/data/data/com.android.shell/androidvncserver -s 100"
-   M.configs["allow-vnc-resize"] = "true"
-   if vnc_mode == "横屏高清" then
-      M.configs["phone-width"] = 1920
-      M.configs["phone-height"] = 1080
-   elseif vnc_mode == "竖屏高清" then
-      M.configs["phone-width"] = 1080
-      M.configs["phone-height"] = 1920
+if dofile_res then
+   if vnc_mode.mode == "演示模式" then
+      M.configs["vnc-server-command"] = "/data/data/com.android.shell/androidvncserver -s 50"
+   else
+      M.configs["vnc-server-command"] = "/data/data/com.android.shell/androidvncserver -s 100"
    end
+   M.configs["allow-vnc-resize"] = "true"
+   M.configs["phone-width"] = vnc_mode.width
+   M.configs["phone-height"] = vnc_mode.height
 end
 
 M.configs['vnc_mode'] = vnc_mode
