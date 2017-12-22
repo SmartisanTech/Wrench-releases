@@ -1,3 +1,4 @@
+#!/usr/bin/env Wrench
 -- 在Kindle书店里搜索你想要找的书
 function start_kindle()
    for i = 1, 20 do

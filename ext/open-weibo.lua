@@ -1,3 +1,4 @@
+#!/usr/bin/env Wrench
 -- 用手机微博App打开微博网页
 
 local sina_url
@@ -28,19 +29,19 @@ function open_sina_user(arg)
    adb_shell{"am", "start", "-n", "com.sina.weibo/.page.ProfileInfoActivity", "--es", param_name, param_val}
 end
 
-sina_url, ok = sina_url:gsub("http://m?%.?weibo%.co?[mn]?/([dup])/([^?/&%%]+).*", "%1\n%2")
+sina_url, ok = sina_url:gsub("https?://m?%.?weibo%.co?[mn]?/([dup])/([^?/&%%]+).*", "%1\n%2")
 if ok == 1 then
    open_sina_user(sina_url)
    return
 end
 
-sina_url, ok = sina_url:gsub("http://[mw]*%.?weibo.co?[mn]?/[^/]*/([^?/]+).*", "%1")
+sina_url, ok = sina_url:gsub("https?://[mw]*%.?weibo.co?[mn]?/[^/]*/([^?/]+).*", "%1")
 if ok == 1 then
    open_sina(sina_url)
    return
 end
 
-sina_url, ok = sina_url:gsub("http://m?%.?weibo%.co?[mn]?/([^?/&%%]+)$", "u\n%1")
+sina_url, ok = sina_url:gsub("https?://m?%.?weibo%.co?[mn]?/([^?/&%%]+)$", "u\n%1")
 if ok == 1 then
    open_sina_user(sina_url)
    return

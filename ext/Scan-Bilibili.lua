@@ -1,3 +1,4 @@
+#!/usr/bin/env Wrench
 -- 打开Bilibili客户端扫描二维码功能
 
 function open_bili_scan()
