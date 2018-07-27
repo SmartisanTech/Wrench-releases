@@ -2240,7 +2240,6 @@ M.set_ext_args = function(...)
 end
 
 M.start_app = function(to_start, to_find)
-   
    if not to_start:match("/") then
       pkg = to_start
       local app_table = M.get_app_table()
