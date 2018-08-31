@@ -18,7 +18,7 @@ local window_post_button_map = {}
 local mail_group_map = {}
 local phone_info_map = {}
 local save_window_types
-local phone_serial = ""
+local android_serial = ""
 local configDir = "."
 local last_uploaded_pics = {}
 local file_exists
@@ -1843,7 +1843,7 @@ M.wrench_config = function(passedConfigDirPath)
       save_phone_info()
    end
 
-   phone_serial = adb_pipe("getprop ro.serialno"):gsub("\n", "")
+   android_serial = adb_pipe("getprop ro.serialno"):gsub("\n", "")
    reset_input_method()
    return ("brand is %s, adb serial is %s"):format(brand, adb_serial)
 end
@@ -3271,10 +3271,10 @@ end
 
 local press_dial_key = function()
    if not where_is_dial_key then
-      where_is_dial_key = phone_info_map[phone_serial .. ":拨号键位置"]
+      where_is_dial_key = phone_info_map[android_serial .. ":拨号键位置"]
       if not where_is_dial_key then
          where_is_dial_key = select_args{"Where is the dial button？", "Middle", "First from left", "Second from left"}
-         phone_info_map[phone_serial .. ":拨号键位置"] = where_is_dial_key
+         phone_info_map[android_serial .. ":拨号键位置"] = where_is_dial_key
          save_phone_info()
       end
    end
